@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { Sidebar } from '@/components/sidebar'
 import { ThemeProvider } from '@/components/theme-provider'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { ToastProvider } from '@/components/ui/toast'
 import { SocketAlertListener } from '@/components/socket-alert-listener'
 import GridScan from '@/components/react-bits/GridScan'
@@ -42,6 +43,7 @@ export default function RootLayout({
               />
             </div>
             <SocketAlertListener />
+            <ThemeToggle />
             <Sidebar />
             <main className="relative z-10 min-h-screen p-4 pt-16 md:ml-64 md:p-8">
               {children}
