@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Appliance {
+  id          Int            @id @default(autoincrement())
+  name        String
+  powerRating Float
+  status      Boolean        @default(false)
+  relayNumber Int
+  icon        String         @default("plug")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  readings    EnergyReading[]
+}
+
+model EnergyReading {
+  id         Int       @id @default(autoincrement())
+  timestamp  DateTime  @default(now())
+  energyUsed Float
+  voltage    Float     @default(120.0)
+  current    Float     @default(0.0)
+  power      Float     @default(0.0)
+  appliance  Appliance @relation(fields: [applianceId], references: [id])
+  applianceId Int
+  budget     Float     @default(0)
+  remaining  Float     @default(0)
+  alert      Boolean   @default(false)
+
+  @@index([applianceId])
+  @@index([timestamp])
+}
+
+model Budget {
+  id            Int      @id @default(autoincrement())
+  maximumEnergy Float
+  currentUsage  Float    @default(0)
+  status        String   @default("active")
+  month         Int
+  year          Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([month, year])
+}
