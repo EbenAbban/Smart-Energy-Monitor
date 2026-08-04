@@ -38,8 +38,9 @@ export function GaugeChart({
   const percent = Math.min((animatedValue / max) * 100, 100)
   const angle = (percent / 100) * 270
   const cx = size / 2
-  const cy = size / 2
-  const r = size * 0.35
+  const cy = size * 0.32
+  const r = size * 0.32
+  const svgHeight = size * 0.72
 
   const color =
     percent > thresholds.danger
@@ -49,21 +50,26 @@ export function GaugeChart({
       : '#10b981'
 
   return (
-    <div className="flex flex-col items-center gap-2">
-      <svg width={size} height={size * 0.55} viewBox={`0 0 ${size} ${size * 0.55}`}>
+    <div className="flex flex-col items-center justify-center p-1">
+      <svg
+        width={size}
+        height={svgHeight}
+        viewBox={`0 0 ${size} ${svgHeight}`}
+        className="overflow-visible"
+      >
         <path
           d={describeArc(cx, cy, r, 135, 405)}
           fill="none"
           stroke="currentColor"
           className="text-gray-800 light:text-gray-200"
-          strokeWidth={12}
+          strokeWidth={10}
           strokeLinecap="round"
         />
         <motion.path
           d={describeArc(cx, cy, r, 135, 135 + angle)}
           fill="none"
           stroke={color}
-          strokeWidth={12}
+          strokeWidth={10}
           strokeLinecap="round"
           initial={{ pathLength: 0 }}
           animate={{ pathLength: percent / 100 }}
@@ -72,25 +78,25 @@ export function GaugeChart({
         />
         <motion.text
           x={cx}
-          y={cy + 20}
+          y={cy + 10}
           textAnchor="middle"
-          className="fill-white light:fill-gray-900 text-xl font-bold"
+          className="fill-white light:fill-gray-900 text-lg font-bold"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
         >
           {animatedValue.toFixed(1)}
-          {unit && <tspan className="fill-gray-500 text-sm">{unit}</tspan>}
+          {unit && <tspan className="fill-gray-400 text-xs font-normal">{unit}</tspan>}
         </motion.text>
         <text
           x={cx}
-          y={cy + 38}
+          y={cy + 28}
           textAnchor="middle"
-          className="fill-gray-500 text-xs"
+          className="fill-gray-500 text-[11px]"
         >
           of {max}{unit}
         </text>
       </svg>
-      <span className="text-sm font-medium text-gray-400 light:text-gray-500">{label}</span>
+      {label && <span className="mt-1 text-xs font-medium text-gray-400 light:text-gray-500">{label}</span>}
     </div>
   )
 }

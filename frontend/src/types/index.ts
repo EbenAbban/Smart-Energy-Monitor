@@ -16,11 +16,12 @@ export interface EnergyReading {
   voltage: number
   current: number
   power: number
-  applianceId: number
+  applianceId?: number
   appliance: Appliance
   budget: number
   remaining: number
   alert: boolean
+  budgetMaxKWh?: number
 }
 
 export interface Budget {

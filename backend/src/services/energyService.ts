@@ -2,35 +2,49 @@ import prisma from '../lib/prisma'
 
 export const getDashboardData = async () => {
   const now = new Date()
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const past24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
-  const [readings, appliances, budget] = await Promise.all([
-    prisma.energyReading.findMany({
-      where: { timestamp: { gte: startOfDay } },
+  let readings = await prisma.energyReading.findMany({
+    where: { timestamp: { gte: past24Hours } },
+    include: { appliance: true },
+    orderBy: { timestamp: 'desc' },
+  })
+
+  // Fallback to latest 100 readings if no data in past 24 hours
+  if (readings.length === 0) {
+    readings = await prisma.energyReading.findMany({
       include: { appliance: true },
       orderBy: { timestamp: 'desc' },
-    }),
+      take: 100,
+    })
+  }
+
+  const [appliances, budget] = await Promise.all([
     prisma.appliance.findMany(),
     prisma.budget.findFirst({
       where: { month: now.getMonth() + 1, year: now.getFullYear() },
-    }),
+    }).then(b => b ?? prisma.budget.findFirst({ orderBy: { updatedAt: 'desc' } })),
   ])
 
-  const totalEnergy = readings.reduce((sum, r) => sum + r.energyUsed, 0)
-  const latestReadings = new Map<number, number>()
+  // Use budget.currentUsage as the authoritative total energy.
+  // The old firmware sent cumulative kWh per reading, which inflates a naive
+  // sum of rows. The budget tracker is the only reliable source of truth.
+  const totalEnergy = Math.round((budget?.currentUsage ?? 0) * 100) / 100
 
-  for (const r of readings) {
-    if (!latestReadings.has(r.applianceId)) {
-      latestReadings.set(r.applianceId, r.power)
-    }
-  }
+  // Current power: from the most recent reading's power field
+  const latestReading = readings[0]
+  const currentPower = latestReading ? Math.round(latestReading.power * 100) / 100 : 0
 
-  const currentPower = Array.from(latestReadings.values()).reduce((sum, p) => sum + p, 0)
   const activeAppliances = appliances.filter((a) => a.status).length
   const alerts = readings.filter((r) => r.alert).length
 
+  // Readings where energyUsed > 1.0 kWh are legacy cumulative rows.
+  // Skip them in charts to avoid wildly distorted bars.
+  const DELTA_THRESHOLD = 1.0
+  const chartReadings = readings.filter((r) => r.energyUsed <= DELTA_THRESHOLD)
+
   const hourlyMap = new Map<string, number>()
-  for (const r of readings) {
+  for (const r of chartReadings) {
     const hour = new Date(r.timestamp).getHours().toString().padStart(2, '0') + ':00'
     hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + r.energyUsed)
   }
@@ -40,7 +54,7 @@ export const getDashboardData = async () => {
     .sort((a, b) => a.hour.localeCompare(b.hour))
 
   const applianceMap = new Map<string, number>()
-  for (const r of readings) {
+  for (const r of chartReadings) {
     const name = r.appliance.name
     applianceMap.set(name, (applianceMap.get(name) || 0) + r.energyUsed)
   }
@@ -55,11 +69,11 @@ export const getDashboardData = async () => {
     .sort((a, b) => b.energy - a.energy)
 
   return {
-    totalEnergy: Math.round(totalEnergy * 100) / 100,
-    currentPower: Math.round(currentPower * 100) / 100,
+    totalEnergy,
+    currentPower,
     activeAppliances,
     totalAppliances: appliances.length,
-    budgetUsage: budget?.currentUsage ?? 0,
+    budgetUsage: Math.round((budget?.currentUsage ?? 0) * 100) / 100,
     budgetMaximum: budget?.maximumEnergy ?? 1000,
     alerts,
     hourlyUsage,
@@ -67,38 +81,69 @@ export const getDashboardData = async () => {
   }
 }
 
+
 export const createReading = async (data: {
-  applianceId: number
+  applianceId?: number
   energyUsed: number
   voltage?: number
   current?: number
   power?: number
+  timestamp?: number | string | Date
+  budget?: number
+  remaining?: number
+  alert?: boolean
 }) => {
-  const { applianceId, energyUsed, voltage, current, power } = data
+  let targetApplianceId = data.applianceId
 
-  const appliance = await prisma.appliance.findUnique({ where: { id: applianceId } })
-  if (!appliance) throw new Error('Appliance not found')
+  if (!targetApplianceId) {
+    const defaultAppliance = await prisma.appliance.findFirst({ orderBy: { id: 'asc' } })
+    if (defaultAppliance) {
+      targetApplianceId = defaultAppliance.id
+    } else {
+      const newAppliance = await prisma.appliance.create({
+        data: {
+          name: 'Main System',
+          powerRating: 2300,
+          relayNumber: 1,
+          icon: 'zap',
+        },
+      })
+      targetApplianceId = newAppliance.id
+    }
+  } else {
+    const appliance = await prisma.appliance.findUnique({ where: { id: targetApplianceId } })
+    if (!appliance) throw new Error('Appliance not found')
+  }
 
   const now = new Date()
+  let readingTimestamp = now
+  if (data.timestamp) {
+    const parsed = new Date(data.timestamp)
+    if (!isNaN(parsed.getTime())) {
+      readingTimestamp = parsed
+    }
+  }
+
   const budget = await prisma.budget.findFirst({
     where: { month: now.getMonth() + 1, year: now.getFullYear() },
   })
 
-  const budgetAfter = (budget?.currentUsage ?? 0) + energyUsed
-  const budgetMax = budget?.maximumEnergy ?? 1000
-  const remaining = Math.max(0, budgetMax - budgetAfter)
-  const alert = budgetAfter > budgetMax * 0.9
+  const budgetMax = budget?.maximumEnergy ?? data.budget ?? 1000
+  const budgetAfter = (budget?.currentUsage ?? 0) + data.energyUsed
+  const remaining = data.remaining !== undefined ? data.remaining : Math.max(0, budgetMax - budgetAfter)
+  const isAlert = data.alert !== undefined ? data.alert : budgetAfter > budgetMax * 0.9
 
   const reading = await prisma.energyReading.create({
     data: {
-      applianceId,
-      energyUsed,
-      voltage: voltage ?? 120,
-      current: current ?? 0,
-      power: power ?? 0,
+      applianceId: targetApplianceId,
+      energyUsed: data.energyUsed,
+      voltage: data.voltage ?? 230,
+      current: data.current ?? 0,
+      power: data.power ?? 0,
+      timestamp: readingTimestamp,
       budget: budgetMax,
       remaining,
-      alert,
+      alert: isAlert,
     },
     include: { appliance: true },
   })
@@ -110,7 +155,10 @@ export const createReading = async (data: {
     })
   }
 
-  return reading
+  return {
+    ...reading,
+    budgetMaxKWh: budgetMax,
+  }
 }
 
 export const getReadings = async (

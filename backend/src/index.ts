@@ -1,3 +1,8 @@
+import dotenv from 'dotenv'
+import path from 'path'
+
+dotenv.config({ path: path.resolve(__dirname, '../.env') })
+
 import express, { Request, Response, NextFunction } from 'express'
 import http from 'http'
 import cors from 'cors'
@@ -7,6 +12,7 @@ import readingsRouter from './routes/readings'
 import appliancesRouter from './routes/appliances'
 import budgetRouter from './routes/budget'
 import dashboardRouter from './routes/dashboard'
+import { ensureMonthlyBudget } from './services/budgetService'
 
 const app = express()
 const server = http.createServer(app)
@@ -57,9 +63,26 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: 'Internal server error' })
 })
 
-const PORT = process.env.PORT || 4000
-server.listen(PORT, () => {
-  console.log(`Smart Energy Monitor backend running on http://localhost:${PORT}`)
+import os from 'os'
+
+const PORT = Number(process.env.PORT) || 4000
+const HOST = '0.0.0.0'
+
+server.listen(PORT, HOST, () => {
+  console.log(`\nSmart Energy Monitor backend running on http://localhost:${PORT}`)
+  console.log('📡 Available LAN IP addresses for ESP32 SERVER_HOST:')
+  const interfaces = os.networkInterfaces()
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        console.log(`   -> http://${iface.address}:${PORT}`)
+      }
+    }
+  }
+  console.log('')
+
+  // Ensure a budget row exists for the current month
+  ensureMonthlyBudget().catch((err) => console.error('[Budget] Startup seed failed:', err))
 })
 
 process.on('SIGTERM', async () => {

@@ -27,11 +27,12 @@ export const api = {
     return fetchJSON<ReadingsResponse>(`/readings?${query}`)
   },
 
-  sendReading: (data: { applianceId: number; energyUsed: number; voltage?: number; current?: number; power?: number }) =>
+  sendReading: (data: { applianceId?: number; energyUsed: number; voltage?: number; current?: number; power?: number; timestamp?: number | string }) =>
     fetchJSON<EnergyReading>('/readings', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  getApplianceState: () => fetchJSON<any[]>('/appliances/state'),
 
   getAppliances: () => fetchJSON<Appliance[]>('/appliances'),
 
@@ -49,7 +50,13 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  deleteAppliance: (id: number) =>
+    fetchJSON<{ success: boolean; message: string }>(`/appliances/${id}`, {
+      method: 'DELETE',
+    }),
+
   getBudget: () => fetchJSON<Budget>('/budget'),
+
 
   setBudget: (maximumEnergy: number) =>
     fetchJSON<Budget>('/budget', {

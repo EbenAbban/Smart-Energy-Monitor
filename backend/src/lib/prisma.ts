@@ -4,11 +4,19 @@ const basePrisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
 })
 
-const COLD_START_RETRIES = 3
-const COLD_START_BASE_DELAY_MS = 400
+const COLD_START_RETRIES = 6
+const COLD_START_BASE_DELAY_MS = 2000
 
 function isColdStartError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes("Can't reach database server")
+  if (!(err instanceof Error)) return false
+  const msg = err.message
+  return (
+    msg.includes("Can't reach database server") ||
+    msg.includes('Connection timed out') ||
+    msg.includes('connection timeout') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ECONNRESET')
+  )
 }
 
 // Neon (free tier) suspends its compute after a period of inactivity. The first

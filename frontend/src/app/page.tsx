@@ -11,6 +11,7 @@ import { CardSkeleton, ChartSkeleton } from '@/components/ui/skeleton'
 import { GaugeChart } from '@/components/ui/gauge'
 import { AnimatedPage, FadeUp, StaggerGrid, HoverScale, CountUp } from '@/components/animations'
 import { estimateCost } from '@/lib/export'
+import { usePricing } from '@/hooks/usePricing'
 import {
   Zap, Activity, Gauge, AlertTriangle, TrendingUp, DollarSign, Leaf,
 } from 'lucide-react'
@@ -23,13 +24,12 @@ import type { DashboardData } from '@/types'
 import { formatEnergy } from '@/lib/utils'
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
-const RATE_PER_KWH = 0.12
-const PEAK_RATE = 0.18
 const PEAK_HOURS = [17, 18, 19, 20] // 5-9pm peak
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const { config: pricing } = usePricing()
 
   useEffect(() => {
     api.getDashboard()
@@ -47,22 +47,23 @@ export default function DashboardPage() {
     : 0
 
   const costBreakdown = useMemo(() => {
-    if (!data) return { estimated: 0, peak: 0, offPeak: 0, co2: 0 }
-    const peakKwh = data.hourlyUsage
+    if (!data) return { estimated: 0, peak: 0, offPeak: 0, co2: 0 };
+    const hourly = data.hourlyUsage ?? [];
+    const peakKwh = hourly
       .filter((h) => PEAK_HOURS.includes(parseInt(h.hour)))
-      .reduce((s, h) => s + h.energy, 0)
-    const offPeakKwh = data.totalEnergy - peakKwh
+      .reduce((s, h) => s + h.energy, 0);
+    const offPeakKwh = data.totalEnergy - peakKwh;
     return {
-      estimated: estimateCost(data.totalEnergy, RATE_PER_KWH),
-      peak: estimateCost(peakKwh, PEAK_RATE, PEAK_RATE, true),
-      offPeak: estimateCost(offPeakKwh, RATE_PER_KWH),
-      co2: data.totalEnergy * 0.92, // lbs CO2 per kWh (US avg)
-    }
-  }, [data])
+      estimated: estimateCost(data.totalEnergy, pricing.ratePerKwh),
+      peak: estimateCost(peakKwh, pricing.peakRatePerKwh, pricing.peakRatePerKwh, true),
+      offPeak: estimateCost(offPeakKwh, pricing.ratePerKwh),
+      co2: data.totalEnergy * 0.92,
+    };
+  }, [data, pricing]);
 
   const hourlyWithPeak = useMemo(() => {
     if (!data) return []
-    return data.hourlyUsage.map((h) => ({
+    return (data.hourlyUsage ?? []).map((h) => ({
       ...h,
       isPeak: PEAK_HOURS.includes(parseInt(h.hour)),
     }))
@@ -132,9 +133,9 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-white light:text-gray-900">
-                    $<CountUp value={costBreakdown.estimated} decimals={2} />
+                    {pricing.symbol}<CountUp value={costBreakdown.estimated} decimals={2} />
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">Today at ${RATE_PER_KWH}/kWh</p>
+                  <p className="mt-1 text-xs text-gray-500">Today at {pricing.symbol}{pricing.ratePerKwh}/kWh</p>
                 </CardContent>
               </Card>
             </HoverScale>
@@ -210,7 +211,7 @@ export default function DashboardPage() {
                             fill="url(#offpeakGrad)"
                             dot={false}
                           />
-                          {data.hourlyUsage
+                          {(data.hourlyUsage ?? [])
                             .filter((h) => PEAK_HOURS.includes(parseInt(h.hour)))
                             .map((h) => (
                               <Area
@@ -247,7 +248,7 @@ export default function DashboardPage() {
                       max={data.budgetMaximum}
                       label="Monthly Budget"
                       unit=" kWh"
-                      size={180}
+                      size={160}
                     />
                   </CardContent>
                 </Card>
@@ -335,13 +336,13 @@ export default function DashboardPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={data.applianceBreakdown}
+                          data={data.applianceBreakdown ?? []}
                           cx="50%" cy="50%"
                           innerRadius={50} outerRadius={80}
                           paddingAngle={3}
                           dataKey="energy" nameKey="name"
                         >
-                          {data.applianceBreakdown.map((_, i) => (
+                          {(data.applianceBreakdown ?? []).map((_, i) => (
                             <Cell key={i} fill={COLORS[i % COLORS.length]} />
                           ))}
                         </Pie>
