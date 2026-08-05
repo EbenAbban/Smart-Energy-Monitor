@@ -43,6 +43,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [pricingSaved, setPricingSaved] = useState(false)
+  // true when user clicked Save on an exceeded budget — shows confirmation dialog
+  const [confirmRecharge, setConfirmRecharge] = useState(false)
   const { addToast } = useToast()
 
   // Pricing
@@ -68,11 +70,31 @@ export default function SettingsPage() {
   const saveBudget = async () => {
     const val = parseFloat(budgetInput)
     if (isNaN(val) || val <= 0) { addToast({ title: 'Invalid budget value', variant: 'danger' }); return }
+
+    // If the budget is currently exceeded, require explicit confirmation first
+    if (budget?.status === 'exceeded' && !confirmRecharge) {
+      setConfirmRecharge(true)
+      return
+    }
+
+    setConfirmRecharge(false)
     setSaving(true)
     try {
       const updated = await api.setBudget(val)
       setBudget(updated)
-      addToast({ title: 'Budget updated successfully', variant: 'success' })
+
+      if (updated.wasRecharged) {
+        // Recharge scenario — show carry-over details
+        const carried = (updated.carryOver ?? 0).toFixed(4)
+        const remaining = (updated.maximumEnergy - (updated.carryOver ?? 0)).toFixed(4)
+        addToast({
+          title: `⚡ Budget recharged!`,
+          description: `${carried} kWh carried over from overage — ${remaining} kWh remaining.`,
+          variant: 'success',
+        })
+      } else {
+        addToast({ title: 'Budget updated successfully', variant: 'success' })
+      }
     } catch {
       addToast({ title: 'Failed to update budget', variant: 'danger' })
     } finally { setSaving(false) }
@@ -218,6 +240,40 @@ export default function SettingsPage() {
                   </div>
                   <Progress value={budgetPercent} indicatorClassName={budgetPercent > 90 ? 'bg-red-500' : budgetPercent > 70 ? 'bg-amber-500' : undefined} />
                   <Badge variant={budget.status === 'exceeded' ? 'danger' : 'success'}>{budget.status}</Badge>
+                </motion.div>
+              )}
+              {/* ── Recharge confirmation banner ── */}
+              {confirmRecharge && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 space-y-2"
+                >
+                  <p className="text-sm font-medium text-amber-400">⚠️ Recharge confirmation</p>
+                  <p className="text-xs text-gray-300">
+                    Your budget has been exceeded. Setting a new limit of{' '}
+                    <span className="text-white font-semibold">{parseFloat(budgetInput).toFixed(2)} kWh</span> will
+                    carry over{' '}
+                    <span className="text-amber-300 font-semibold">
+                      {Math.max(0, (budget?.currentUsage ?? 0) - (budget?.maximumEnergy ?? 0)).toFixed(4)} kWh
+                    </span>{' '}
+                    of overage into the new cycle.
+                  </p>
+                  <div className="flex gap-2">
+                    <motion.button
+                      whileTap={{ scale: 0.95 }}
+                      onClick={saveBudget}
+                      className="flex-1 rounded-md bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
+                    >
+                      ✓ Confirm Recharge
+                    </motion.button>
+                    <motion.button
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setConfirmRecharge(false)}
+                      className="flex-1 rounded-md bg-gray-700 hover:bg-gray-600 px-3 py-1.5 text-xs font-semibold text-gray-300 transition-colors"
+                    >
+                      Cancel
+                    </motion.button>
+                  </div>
                 </motion.div>
               )}
               <div className="flex gap-2">

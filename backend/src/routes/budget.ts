@@ -19,9 +19,34 @@ router.put('/', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'maximumEnergy is required' })
       return
     }
-    const budget = await budgetService.setBudget(maximumEnergy)
-    req.app.get('io')?.emit('budgetUpdate', { used: budget.currentUsage, maximum: budget.maximumEnergy })
-    res.json(budget)
+
+    // Capture the old budget status before setBudget overwrites it
+    const previous = await budgetService.getCurrentBudget()
+    const wasExceeded = previous?.status === 'exceeded'
+
+    const budget = await budgetService.setBudget(Number(maximumEnergy))
+
+    // Determine whether this was a recharge (overflow carry-over) or a plain update
+    const wasRecharged = wasExceeded && budget.status === 'active'
+    const carryOver = wasRecharged ? budget.currentUsage : undefined
+
+    // Always emit budgetUpdate so dashboard gauge/stats refresh immediately
+    req.app.get('io')?.emit('budgetUpdate', {
+      used: budget.currentUsage,
+      maximum: budget.maximumEnergy,
+      status: budget.status,
+    })
+
+    // Additionally emit budgetReset so the settings page can show a specific toast
+    if (wasRecharged) {
+      req.app.get('io')?.emit('budgetReset', {
+        carryOver,
+        maximum: budget.maximumEnergy,
+        remaining: budget.maximumEnergy - (carryOver ?? 0),
+      })
+    }
+
+    res.json({ ...budget, wasRecharged, carryOver })
   } catch (err: any) {
     res.status(400).json({ error: err.message })
   }

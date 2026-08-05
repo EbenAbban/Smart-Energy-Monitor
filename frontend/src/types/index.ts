@@ -31,6 +31,10 @@ export interface Budget {
   status: string
   month: number
   year: number
+  /** Present only on PUT /budget responses — true when an exceeded budget was recharged */
+  wasRecharged?: boolean
+  /** Units carried over from the overage when wasRecharged is true */
+  carryOver?: number
 }
 
 export interface DashboardData {
