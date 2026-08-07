@@ -23,6 +23,8 @@ export default function AppBackground() {
         noiseIntensity={0.005}
         scanDuration={2.5}
         scanDelay={2.5}
+        fps={30}
+        maxPixelRatio={1}
       />
     </div>
   )

@@ -1,10 +1,20 @@
 'use client'
 
-import * as faceapi from 'face-api.js'
 import { BloomEffect, ChromaticAberrationEffect, EffectComposer, EffectPass, RenderPass } from 'postprocessing'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import * as THREE from 'three'
 import './GridScan.css'
+
+// face-api.js is ~664KB minified and is only needed when `enableWebcam` is set.
+// `import type` is erased at build time, so the library stays out of the bundle
+// until loadFaceApi() actually runs.
+import type * as FaceApi from 'face-api.js'
+
+let faceApiPromise: Promise<typeof FaceApi> | null = null
+function loadFaceApi() {
+  if (!faceApiPromise) faceApiPromise = import('face-api.js')
+  return faceApiPromise
+}
 
 const vert = `
 varying vec2 vUv;
@@ -301,6 +311,12 @@ export interface GridScanProps {
   enableGyro?: boolean
   scanOnClick?: boolean
   snapBackDelay?: number
+  /** Frame budget for the shader loop. Background decoration does not need to
+   *  run at the display refresh rate; capping frees GPU/main thread for the UI. */
+  fps?: number
+  /** Render scale. Defaults to 1 device pixel — this is a soft background, so
+   *  supersampling it on HiDPI screens costs 2-4x fill rate for no visible gain. */
+  maxPixelRatio?: number
   className?: string
   style?: CSSProperties
 }
@@ -338,11 +354,14 @@ export const GridScan = ({
   enableGyro = false,
   scanOnClick = false,
   snapBackDelay = 250,
+  fps = 30,
+  maxPixelRatio = 1,
   className,
   style
 }: GridScanProps) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const faceApiRef = useRef<typeof FaceApi | null>(null)
 
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const materialRef = useRef<THREE.ShaderMaterial | null>(null)
@@ -459,9 +478,19 @@ export const GridScan = ({
     const container = containerRef.current
     if (!container) return
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    // No MSAA: this is a single fullscreen quad and the shader already
+    // antialiases its own lines via fwidth/smoothstep, so multisampling only
+    // costs fill rate. `powerPreference: 'low-power'` keeps laptops on the
+    // integrated GPU for what is only a background.
+    const renderer = new THREE.WebGLRenderer({
+      antialias: false,
+      alpha: true,
+      powerPreference: 'low-power',
+      stencil: false,
+      depth: false
+    })
     rendererRef.current = renderer
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Math.max(0.5, maxPixelRatio)))
     renderer.setSize(container.clientWidth, container.clientHeight)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.NoToneMapping
@@ -538,24 +567,54 @@ export const GridScan = ({
       composer.addPass(effectPass)
     }
 
+    let lastW = -1
+    let lastH = -1
     const onResize = () => {
-      renderer.setSize(container.clientWidth, container.clientHeight)
-      material.uniforms.iResolution.value.set(container.clientWidth, container.clientHeight, renderer.getPixelRatio())
-      if (composerRef.current) composerRef.current.setSize(container.clientWidth, container.clientHeight)
+      const w = container.clientWidth
+      const h = container.clientHeight
+      // A 0-sized container means we're mid-layout; skip rather than baking in
+      // a zero-size backing store.
+      if (w <= 0 || h <= 0) return
+      if (w === lastW && h === lastH) return
+      lastW = w
+      lastH = h
+      renderer.setSize(w, h)
+      material.uniforms.iResolution.value.set(w, h, renderer.getPixelRatio())
+      if (composerRef.current) composerRef.current.setSize(w, h)
     }
-    window.addEventListener('resize', onResize)
+
+    // A window 'resize' listener alone misses the common case where the
+    // container is still 0x0 when this effect runs (the canvas then stays
+    // 0x0 forever and the background silently never appears). Observing the
+    // container itself covers first layout and any later container resize.
+    const resizeObserver = new ResizeObserver(onResize)
+    resizeObserver.observe(container)
+    onResize()
 
     let last = performance.now()
+    let lastDraw = 0
+    const frameInterval = fps > 0 ? 1000 / fps : 0
     const prefersReducedMotion =
       typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
     const tick = () => {
+      // Schedule the next frame first so an early-out below still keeps the
+      // loop alive.
+      if (!prefersReducedMotion) {
+        rafRef.current = requestAnimationFrame(tick)
+      }
+
       const now = performance.now()
+
+      // Frame cap: skip the draw entirely on frames inside the budget. On a
+      // 144Hz display this cuts shader invocations by ~4x.
+      if (frameInterval > 0 && now - lastDraw < frameInterval) return
+      lastDraw = now
+
       const dt = Math.max(0, Math.min(0.1, (now - last) / 1000))
       last = now
 
-      lookCurrent.current.copy(
-        smoothDampVec2(lookCurrent.current, lookTarget.current, lookVel.current, smoothTime, maxSpeed, dt)
-      )
+      smoothDampVec2(lookCurrent.current, lookTarget.current, lookVel.current, smoothTime, maxSpeed, dt)
 
       const tiltSm = smoothDampFloat(tiltCurrent.current, tiltTarget.current, { v: tiltVel.current }, smoothTime, maxSpeed, dt)
       tiltCurrent.current = tiltSm.value
@@ -565,20 +624,19 @@ export const GridScan = ({
       yawCurrent.current = yawSm.value
       yawVel.current = yawSm.v
 
-      const skew = new THREE.Vector2(lookCurrent.current.x * skewScale, -lookCurrent.current.y * yBoost * skewScale)
-      material.uniforms.uSkew.value.set(skew.x, skew.y)
+      material.uniforms.uSkew.value.set(
+        lookCurrent.current.x * skewScale,
+        -lookCurrent.current.y * yBoost * skewScale
+      )
       material.uniforms.uTilt.value = tiltCurrent.current * tiltScale
       material.uniforms.uYaw.value = THREE.MathUtils.clamp(yawCurrent.current * yawScale, -0.6, 0.6)
 
       material.uniforms.iTime.value = now / 1000
-      renderer.clear(true, true, true)
+      renderer.clear(true, false, false)
       if (composerRef.current) {
         composerRef.current.render(dt)
       } else {
         renderer.render(scene, camera)
-      }
-      if (!prefersReducedMotion) {
-        rafRef.current = requestAnimationFrame(tick)
       }
     }
     if (!prefersReducedMotion) {
@@ -589,17 +647,26 @@ export const GridScan = ({
 
     const onVisibilityChange = () => {
       if (document.hidden) {
-        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        if (rafRef.current !== null) {
+          cancelAnimationFrame(rafRef.current)
+          // Must null the handle: the restart branch below keys off it, so
+          // leaving a stale id here strands the loop permanently.
+          rafRef.current = null
+        }
       } else if (!prefersReducedMotion && rafRef.current === null) {
+        last = performance.now()
         rafRef.current = requestAnimationFrame(tick)
       }
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener('resize', onResize)
+      resizeObserver.disconnect()
       material.dispose()
       quad.geometry.dispose()
 
@@ -637,7 +704,9 @@ export const GridScan = ({
     skewScale,
     yBoost,
     tiltScale,
-    yawScale
+    yawScale,
+    fps,
+    maxPixelRatio
   ])
 
   useEffect(() => {
@@ -711,6 +780,9 @@ export const GridScan = ({
     let canceled = false
     const load = async () => {
       try {
+        const faceapi = await loadFaceApi()
+        if (canceled) return
+        faceApiRef.current = faceapi
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(modelsPath),
           faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelsPath)
@@ -734,6 +806,8 @@ export const GridScan = ({
     const start = async () => {
       if (!enableWebcam || !modelsReady) return
       if (!video) return
+      const faceapi = faceApiRef.current
+      if (!faceapi) return
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -848,6 +922,14 @@ function srgbColor(hex: string) {
   return c.convertSRGBToLinear()
 }
 
+/**
+ * Critically-damped smoothing, component-wise and allocation-free.
+ *
+ * The previous implementation allocated ~7 THREE.Vector2 objects per call,
+ * which at 60fps meant hundreds of short-lived objects per second feeding GC
+ * pauses that showed up as UI stutter. This version mutates `current` and
+ * `currentVelocity` in place and does the same math on plain numbers.
+ */
 function smoothDampVec2(
   current: THREE.Vector2,
   target: THREE.Vector2,
@@ -856,32 +938,49 @@ function smoothDampVec2(
   maxSpeed: number,
   deltaTime: number
 ) {
-  const out = current.clone()
   const smoothTime = Math.max(0.0001, smoothTimeIn)
   const omega = 2 / smoothTime
   const x = omega * deltaTime
   const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x)
 
-  const change = current.clone().sub(target)
-  const originalTo = target.clone()
+  const origX = target.x
+  const origY = target.y
+  const startX = current.x
+  const startY = current.y
+
+  let changeX = startX - origX
+  let changeY = startY - origY
 
   const maxChange = maxSpeed * smoothTime
-  if (change.length() > maxChange) change.setLength(maxChange)
+  if (Number.isFinite(maxChange)) {
+    const len = Math.hypot(changeX, changeY)
+    if (len > maxChange && len > 0) {
+      const k = maxChange / len
+      changeX *= k
+      changeY *= k
+    }
+  }
 
-  const clampedTarget = current.clone().sub(change)
-  const temp = currentVelocity.clone().addScaledVector(change, omega).multiplyScalar(deltaTime)
-  currentVelocity.sub(temp.clone().multiplyScalar(omega))
-  currentVelocity.multiplyScalar(exp)
+  const clampedTargetX = startX - changeX
+  const clampedTargetY = startY - changeY
 
-  out.copy(clampedTarget.clone().add(change.add(temp).multiplyScalar(exp)))
+  const tempX = (currentVelocity.x + omega * changeX) * deltaTime
+  const tempY = (currentVelocity.y + omega * changeY) * deltaTime
 
-  const origMinusCurrent = originalTo.clone().sub(current)
-  const outMinusOrig = out.clone().sub(originalTo)
-  if (origMinusCurrent.dot(outMinusOrig) > 0) {
-    out.copy(originalTo)
+  currentVelocity.set((currentVelocity.x - omega * tempX) * exp, (currentVelocity.y - omega * tempY) * exp)
+
+  let outX = clampedTargetX + (changeX + tempX) * exp
+  let outY = clampedTargetY + (changeY + tempY) * exp
+
+  // Overshoot guard: if we passed the target this step, snap and stop.
+  if ((origX - startX) * (outX - origX) + (origY - startY) * (outY - origY) > 0) {
+    outX = origX
+    outY = origY
     currentVelocity.set(0, 0)
   }
-  return out
+
+  current.set(outX, outY)
+  return current
 }
 
 function smoothDampFloat(
@@ -930,7 +1029,7 @@ function median(buf: number[]) {
   return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) * 0.5
 }
 
-function centroid(points: faceapi.Point[]) {
+function centroid(points: FaceApi.Point[]) {
   let x = 0
   let y = 0
   const n = points.length || 1
@@ -941,7 +1040,7 @@ function centroid(points: faceapi.Point[]) {
   return { x: x / n, y: y / n }
 }
 
-function dist2(a: faceapi.Point, b: faceapi.Point) {
+function dist2(a: FaceApi.Point, b: FaceApi.Point) {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 

@@ -3,6 +3,10 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* Isolate the animating canvas: its repaints must not invalidate layout,
+     style, or paint for the rest of the page. Deliberately not `strict` —
+     that adds size containment, which would collapse this percentage-sized box. */
+  contain: layout paint style;
 }
 
 .gridscan__preview {

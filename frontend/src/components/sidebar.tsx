@@ -39,6 +39,12 @@ const sidebarHyperspeedOptions: HyperspeedEffectOptions = {
   fovSpeedUp: 110,
   totalSideLightSticks: 10,
   lightPairsPerRoadWay: 16,
+  // Decoration only: half frame rate, 1x pixel ratio, no SMAA pass, and no
+  // pointer listeners (the wrapper is pointer-events-none anyway).
+  fps: 30,
+  maxPixelRatio: 1,
+  smaa: false,
+  interactive: false,
   colors: {
     roadColor: 0x050505,
     islandColor: 0x070707,
@@ -99,7 +105,7 @@ export function Sidebar() {
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium backdrop-blur-sm transition-all duration-200',
+                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
                   pathname === item.href
                     ? 'bg-emerald-600/30 text-emerald-400 light:bg-emerald-100 light:text-emerald-700'
                     : 'text-gray-300 hover:bg-gray-800/70 hover:text-gray-200 light:text-gray-500 light:hover:bg-gray-100 light:hover:text-gray-700'
@@ -113,7 +119,7 @@ export function Sidebar() {
         </nav>
 
         <div className="p-4 space-y-3">
-          <div className="rounded-lg border border-gray-800 light:border-gray-200 bg-gray-900/80 light:bg-white/80 p-3 backdrop-blur-sm">
+          <div className="rounded-lg border border-gray-800 light:border-gray-200 bg-gray-900/80 light:bg-white/80 p-3">
             <p className="text-xs text-gray-500 light:text-gray-400">System Status</p>
             <div className="mt-1 flex items-center gap-2">
               <span className="relative flex h-2 w-2">
@@ -126,7 +132,7 @@ export function Sidebar() {
 
           <button
             onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')}
-            className="flex w-full items-center gap-3 rounded-lg bg-gray-900/60 px-3 py-2.5 text-sm font-medium text-gray-400 backdrop-blur-sm hover:bg-gray-800 hover:text-gray-200 transition-all light:text-gray-500 light:hover:bg-gray-100 light:hover:text-gray-700"
+            className="flex w-full items-center gap-3 rounded-lg bg-gray-900/60 px-3 py-2.5 text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-all light:text-gray-500 light:hover:bg-gray-100 light:hover:text-gray-700"
           >
             {resolved === 'dark' ? (
               <Sun className="h-5 w-5 text-amber-400" />

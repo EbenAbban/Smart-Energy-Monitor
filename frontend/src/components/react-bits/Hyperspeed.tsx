@@ -55,6 +55,15 @@ export interface HyperspeedEffectOptions {
   carShiftX?: [number, number]
   carFloorSeparation?: [number, number]
   colors?: Partial<HyperspeedColors>
+  /** Frame budget for the render loop. Decorative scenes do not need to run at
+   *  the display refresh rate; capping frees GPU/main thread for the UI. */
+  fps?: number
+  /** Render scale. Defaults to 1 device pixel. */
+  maxPixelRatio?: number
+  /** Adds an SMAA antialiasing pass (3 extra fullscreen passes). Off by default. */
+  smaa?: boolean
+  /** Enables the click/tap speed-up interaction and its pointer listeners. */
+  interactive?: boolean
 }
 
 export interface HyperspeedProps {
@@ -90,6 +99,10 @@ const DEFAULT_EFFECT_OPTIONS: Required<Omit<HyperspeedEffectOptions, 'onSpeedUp'
   carWidthPercentage: [0.3, 0.5],
   carShiftX: [-0.8, 0.8],
   carFloorSeparation: [0, 5],
+  fps: 30,
+  maxPixelRatio: 1,
+  smaa: false,
+  interactive: false,
   colors: {
     roadColor: 0x080808,
     islandColor: 0x0a0a0a,
@@ -853,10 +866,14 @@ class HyperspeedApp {
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
-      alpha: true
+      alpha: true,
+      powerPreference: 'low-power',
+      stencil: false
     })
     this.renderer.setSize(initW, initH, false)
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25))
+    // 1 device pixel is plenty for a decorative sidebar panel; 1.25 on a HiDPI
+    // screen was costing ~1.6x the fragments for no perceptible difference.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, options.maxPixelRatio ?? 1))
     this.composer = new EffectComposer(this.renderer)
     container.append(this.renderer.domElement)
 
@@ -877,6 +894,10 @@ class HyperspeedApp {
     this.clock = new THREE.Clock()
     this.assets = {}
     this.disposed = false
+    this.lookAtScratch = new THREE.Vector3()
+    this.frameInterval = (options.fps ?? 0) > 0 ? 1000 / options.fps : 0
+    this.lastDraw = 0
+    this.lastResizeCheck = 0
 
     this.road = new Road(this, options)
     this.leftCarLights = new CarLights(this, options, options.colors.leftCars, options.movingAwaySpeed, new THREE.Vector2(0, 1 - options.carLightsFade))
@@ -926,27 +947,26 @@ class HyperspeedApp {
 
   initPasses() {
     this.renderPass = new RenderPass(this.scene, this.camera)
-    this.bloomPass = new EffectPass(
-      this.camera,
-      new BloomEffect({
-        luminanceThreshold: 0.2,
-        luminanceSmoothing: 0,
-        resolutionScale: 1
-      })
-    )
 
-    const smaaPass = new EffectPass(
-      this.camera,
-      new SMAAEffect({
-        preset: SMAAPreset.MEDIUM
-      })
-    )
+    // Bloom at half resolution. The effect is a soft glow, so downsampling the
+    // mip chain is visually almost identical but quarters the fill cost.
+    const bloom = new BloomEffect({
+      luminanceThreshold: 0.2,
+      luminanceSmoothing: 0,
+      resolutionScale: 0.5
+    })
+
+    // SMAA is an edge-detect + blend-weight + neighborhood-blend chain: three
+    // extra fullscreen passes plus two lookup textures. On thin moving light
+    // trails behind a 50%-opacity overlay it buys nothing visible, so it is
+    // opt-in rather than always-on.
+    const effects = this.options.smaa ? [bloom, new SMAAEffect({ preset: SMAAPreset.LOW })] : [bloom]
+
+    this.bloomPass = new EffectPass(this.camera, ...effects)
     this.renderPass.renderToScreen = false
-    this.bloomPass.renderToScreen = false
-    smaaPass.renderToScreen = true
+    this.bloomPass.renderToScreen = true
     this.composer.addPass(this.renderPass)
     this.composer.addPass(this.bloomPass)
-    this.composer.addPass(smaaPass)
   }
 
   // SMAA's search/area textures load internally in this postprocessing
@@ -967,15 +987,19 @@ class HyperspeedApp {
     this.leftSticks.init()
     this.leftSticks.mesh.position.setX(-(options.roadWidth + options.islandWidth / 2))
 
-    this.container.addEventListener('mousedown', this.onMouseDown)
-    this.container.addEventListener('mouseup', this.onMouseUp)
-    this.container.addEventListener('mouseout', this.onMouseUp)
+    // Only wire pointer handlers when the scene is actually interactive. As a
+    // background it sits under `pointer-events: none`, so these never fired.
+    if (this.options.interactive) {
+      this.container.addEventListener('mousedown', this.onMouseDown)
+      this.container.addEventListener('mouseup', this.onMouseUp)
+      this.container.addEventListener('mouseout', this.onMouseUp)
 
-    this.container.addEventListener('touchstart', this.onTouchStart, { passive: true })
-    this.container.addEventListener('touchend', this.onTouchEnd, { passive: true })
-    this.container.addEventListener('touchcancel', this.onTouchEnd, { passive: true })
+      this.container.addEventListener('touchstart', this.onTouchStart, { passive: true })
+      this.container.addEventListener('touchend', this.onTouchEnd, { passive: true })
+      this.container.addEventListener('touchcancel', this.onTouchEnd, { passive: true })
 
-    this.container.addEventListener('contextmenu', this.onContextMenu)
+      this.container.addEventListener('contextmenu', this.onContextMenu)
+    }
 
     this.tick()
   }
@@ -1030,7 +1054,14 @@ class HyperspeedApp {
     if (this.options.distortion.getJS) {
       const distortion = this.options.distortion.getJS(0.025, time)
 
-      this.camera.lookAt(new THREE.Vector3(this.camera.position.x + distortion.x, this.camera.position.y + distortion.y, this.camera.position.z + distortion.z))
+      // Reused scratch vector — this ran every frame and allocated a new
+      // Vector3 each time.
+      this.lookAtScratch.set(
+        this.camera.position.x + distortion.x,
+        this.camera.position.y + distortion.y,
+        this.camera.position.z + distortion.z
+      )
+      this.camera.lookAt(this.lookAtScratch)
       updateCamera = true
     }
     if (updateCamera) {
@@ -1113,11 +1144,31 @@ class HyperspeedApp {
       }
     }
 
-    if (resizeRendererToDisplaySize(this.renderer, this.setSize)) {
-      const canvas = this.renderer.domElement
-      if (this.hasValidSize) {
-        this.camera.aspect = canvas.clientWidth / canvas.clientHeight
-        this.camera.updateProjectionMatrix()
+    if (!this.disposed && !this.reducedMotion && !document.hidden) {
+      requestAnimationFrame(this.tick)
+    } else {
+      this.paused = true
+      return
+    }
+
+    // Frame cap. Bail before touching layout or the GPU so a skipped frame
+    // costs nothing but the rAF callback itself.
+    const now = performance.now()
+    if (this.frameInterval > 0 && now - this.lastDraw < this.frameInterval) return
+    this.lastDraw = now
+
+    // resizeRendererToDisplaySize reads canvas.clientWidth/clientHeight, which
+    // forces a synchronous layout. Doing that every frame put a reflow in the
+    // critical path; the resize event already covers real size changes, so
+    // this only needs to be a slow safety-net poll.
+    if (now - this.lastResizeCheck > 500) {
+      this.lastResizeCheck = now
+      if (resizeRendererToDisplaySize(this.renderer, this.setSize)) {
+        const canvas = this.renderer.domElement
+        if (this.hasValidSize) {
+          this.camera.aspect = canvas.clientWidth / canvas.clientHeight
+          this.camera.updateProjectionMatrix()
+        }
       }
     }
 
@@ -1125,12 +1176,6 @@ class HyperspeedApp {
       const delta = this.clock.getDelta()
       this.render(delta)
       this.update(delta)
-    }
-
-    if (!this.disposed && !this.reducedMotion && !document.hidden) {
-      requestAnimationFrame(this.tick)
-    } else {
-      this.paused = true
     }
   }
 }
@@ -1170,6 +1215,11 @@ const Hyperspeed = ({ effectOptions = DEFAULT_EFFECT_OPTIONS }: HyperspeedProps)
     const onVisibility = () => {
       if (!document.hidden && myApp.paused) {
         myApp.paused = false
+        // Drop the elapsed-while-hidden time, otherwise the first delta after
+        // resuming is however long the tab was backgrounded and the scene
+        // lurches forward.
+        myApp.clock.getDelta()
+        myApp.lastDraw = 0
         myApp.tick()
       }
     }
