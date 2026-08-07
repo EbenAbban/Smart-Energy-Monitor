@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { api } from '@/services/api'
 import { useSocket } from '@/hooks/useSocket'
@@ -30,6 +30,7 @@ const PEAK_HOURS = [17, 18, 19, 20] // 5-9pm peak
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     api.getDashboard()
@@ -39,8 +40,18 @@ export default function DashboardPage() {
   }, [])
 
   useSocket('reading', () => {
-    api.getDashboard().then(setData).catch(console.error)
+    if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    refreshTimer.current = setTimeout(() => {
+      if (document.visibilityState === 'hidden') return
+      api.getDashboard().then(setData).catch(console.error)
+    }, 3000)
   })
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    }
+  }, [])
 
   const budgetPercent = data && data.budgetMaximum > 0
     ? Math.min((data.budgetUsage / data.budgetMaximum) * 100, 100)

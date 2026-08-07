@@ -6,7 +6,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ToastProvider } from '@/components/ui/toast'
 import { SocketAlertListener } from '@/components/socket-alert-listener'
-import GridScan from '@/components/react-bits/GridScan'
+import AppBackground from '@/components/app-background'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -26,21 +26,7 @@ export default function RootLayout({
         <ThemeProvider>
           <ToastProvider>
             <div className="fixed inset-0 z-0 pointer-events-none">
-              <GridScan
-                enableWebcam={false}
-                linesColor="#1f2937"
-                scanColor="#10b981"
-                gridScale={0.12}
-                scanOpacity={0.35}
-                lineThickness={1}
-                lineJitter={0.08}
-                enablePost
-                bloomIntensity={0.5}
-                chromaticAberration={0.0015}
-                noiseIntensity={0.01}
-                scanDuration={2.5}
-                scanDelay={2.5}
-              />
+              <AppBackground />
             </div>
             <SocketAlertListener />
             <ThemeToggle />

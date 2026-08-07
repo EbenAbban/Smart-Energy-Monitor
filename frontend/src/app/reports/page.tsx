@@ -5,9 +5,9 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AnimatedPage, FadeUp, StaggerGrid, HoverScale } from '@/components/animations'
-import { Download, Printer, BarChart3, PieChart, Table, Sparkles } from 'lucide-react'
+import { Download, Printer, BarChart3, PieChart, Table, Sparkles, type LucideIcon } from 'lucide-react'
 
-const reports = [
+const reports: { title: string; description: string; icon: LucideIcon; date: string; type: string }[] = [
   { title: 'Daily Energy Summary', description: 'Complete overview of today\'s energy consumption by appliance', icon: BarChart3, date: 'Today', type: 'Daily' },
   { title: 'Weekly Consumption Report', description: '7-day energy usage trends and comparison', icon: PieChart, date: 'This Week', type: 'Weekly' },
   { title: 'Monthly Budget Analysis', description: 'Budget vs actual usage for the current month', icon: Table, date: 'This Month', type: 'Monthly' },

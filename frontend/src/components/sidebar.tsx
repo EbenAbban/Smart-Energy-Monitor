@@ -19,8 +19,13 @@ import {
   Menu,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
-import Hyperspeed, { type HyperspeedEffectOptions } from '@/components/react-bits/Hyperspeed'
+import { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
+import type { HyperspeedEffectOptions } from '@/components/react-bits/Hyperspeed'
+
+const Hyperspeed = dynamic(() => import('@/components/react-bits/Hyperspeed'), {
+  ssr: false,
+})
 
 // Module-level constant so the effect options object is referentially stable
 // across renders (Hyperspeed rebuilds its WebGL scene whenever this changes).
@@ -60,13 +65,18 @@ export function Sidebar() {
   const pathname = usePathname()
   const { resolved, setTheme } = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)')
+    const update = () => setIsDesktop(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
 
   const sidebarContent = (
     <>
-      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-50 light:opacity-20">
-        <Hyperspeed effectOptions={sidebarHyperspeedOptions} />
-      </div>
-
       <div className="relative z-10 flex h-full flex-col">
         <div className="flex h-16 items-center gap-2 border-b border-gray-800 light:border-gray-200 px-6">
           <div className="rounded-lg bg-emerald-500/20 p-1.5">
@@ -140,6 +150,11 @@ export function Sidebar() {
       </button>
 
       <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-gray-800 light:border-gray-200 bg-gray-950 light:bg-white md:flex">
+        {isDesktop && (
+          <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-50 light:opacity-20">
+            <Hyperspeed effectOptions={sidebarHyperspeedOptions} />
+          </div>
+        )}
         {sidebarContent}
       </aside>
 

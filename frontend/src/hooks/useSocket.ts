@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback } from 'react'
-import { connectSocket, disconnectSocket } from '@/services/socket'
+import { connectSocket } from '@/services/socket'
 import type { Socket } from 'socket.io-client'
 
 export function useSocket<T = unknown>(
@@ -17,9 +17,6 @@ export function useSocket<T = unknown>(
 
   useEffect(() => {
     socketRef.current = connectSocket()
-    return () => {
-      disconnectSocket()
-    }
   }, [])
 
   useEffect(() => {

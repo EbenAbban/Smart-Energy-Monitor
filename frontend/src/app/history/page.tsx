@@ -126,16 +126,10 @@ export default function HistoryPage() {
                       key={r.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      layout
                       className="flex items-center justify-between rounded-lg border border-gray-800 light:border-gray-200 px-4 py-3 hover:bg-gray-900/50 light:hover:bg-gray-50 transition-all"
                     >
                       <div className="flex items-center gap-4">
-                        <motion.span
-                          className="h-2 w-2 rounded-full bg-emerald-500"
-                          animate={{ scale: [1, 1.5, 1] }}
-                          transition={{ duration: 2, repeat: Infinity }}
-                        />
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
                         <div className="flex flex-col">
                           <span className="text-sm font-medium text-white light:text-gray-900">
                             {r.appliance?.name ?? `Appliance #${r.applianceId}`}

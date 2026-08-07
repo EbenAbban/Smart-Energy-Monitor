@@ -461,7 +461,7 @@ export const GridScan = ({
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     rendererRef.current = renderer
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25))
     renderer.setSize(container.clientWidth, container.clientHeight)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.NoToneMapping
@@ -546,6 +546,8 @@ export const GridScan = ({
     window.addEventListener('resize', onResize)
 
     let last = performance.now()
+    const prefersReducedMotion =
+      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const tick = () => {
       const now = performance.now()
       const dt = Math.max(0, Math.min(0.1, (now - last) / 1000))
@@ -575,12 +577,28 @@ export const GridScan = ({
       } else {
         renderer.render(scene, camera)
       }
-      rafRef.current = requestAnimationFrame(tick)
+      if (!prefersReducedMotion) {
+        rafRef.current = requestAnimationFrame(tick)
+      }
     }
-    rafRef.current = requestAnimationFrame(tick)
+    if (!prefersReducedMotion) {
+      rafRef.current = requestAnimationFrame(tick)
+    } else {
+      tick()
+    }
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      } else if (!prefersReducedMotion && rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(tick)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('resize', onResize)
       material.dispose()
       quad.geometry.dispose()

@@ -856,7 +856,7 @@ class HyperspeedApp {
       alpha: true
     })
     this.renderer.setSize(initW, initH, false)
-    this.renderer.setPixelRatio(window.devicePixelRatio)
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25))
     this.composer = new EffectComposer(this.renderer)
     container.append(this.renderer.domElement)
 
@@ -887,6 +887,8 @@ class HyperspeedApp {
     this.speedUpTarget = 0
     this.speedUp = 0
     this.timeOffset = 0
+    this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    this.paused = false
 
     this.tick = this.tick.bind(this)
     this.init = this.init.bind(this)
@@ -1125,7 +1127,11 @@ class HyperspeedApp {
       this.update(delta)
     }
 
-    requestAnimationFrame(this.tick)
+    if (!this.disposed && !this.reducedMotion && !document.hidden) {
+      requestAnimationFrame(this.tick)
+    } else {
+      this.paused = true
+    }
   }
 }
 
@@ -1161,7 +1167,16 @@ const Hyperspeed = ({ effectOptions = DEFAULT_EFFECT_OPTIONS }: HyperspeedProps)
     appRef.current = myApp
     myApp.loadAssets().then(myApp.init)
 
+    const onVisibility = () => {
+      if (!document.hidden && myApp.paused) {
+        myApp.paused = false
+        myApp.tick()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
       if (appRef.current) {
         appRef.current.dispose()
         appRef.current = null

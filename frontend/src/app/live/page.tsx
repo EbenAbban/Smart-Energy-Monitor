@@ -42,7 +42,7 @@ export default function LivePage() {
       setTimeout(() => setPulse(false), 300)
       setReadings((prev) => {
         const next = [...prev, data]
-        return next.length > 100 ? next.slice(-100) : next
+        return next.length > 50 ? next.slice(-50) : next
       })
     })
 
@@ -191,8 +191,6 @@ export default function LivePage() {
                         key={r.id}
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: 20 }}
-                        layout
                         className="flex items-center justify-between rounded-lg border border-gray-800 light:border-gray-200 px-4 py-3 text-sm hover:bg-gray-900/50 light:hover:bg-gray-50 transition-colors"
                       >
                         <div className="flex items-center gap-3">
