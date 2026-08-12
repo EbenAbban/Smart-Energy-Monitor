@@ -8,7 +8,7 @@ interface Toast {
   id: string
   title: string
   description?: string
-  variant?: 'default' | 'success' | 'danger'
+  variant?: 'default' | 'success' | 'danger' | 'info' | 'warning'
 }
 
 interface ToastContextType {
@@ -51,6 +51,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                   ? 'border-emerald-800 bg-emerald-900/90 light:bg-emerald-50 light:border-emerald-300 text-emerald-200 light:text-emerald-800'
                   : toast.variant === 'danger'
                   ? 'border-red-800 bg-red-900/90 light:bg-red-50 light:border-red-300 text-red-200 light:text-red-800'
+                  : toast.variant === 'info'
+                  ? 'border-blue-800 bg-blue-900/90 light:bg-blue-50 light:border-blue-300 text-blue-200 light:text-blue-800'
+                  : toast.variant === 'warning'
+                  ? 'border-amber-800 bg-amber-900/90 light:bg-amber-50 light:border-amber-300 text-amber-200 light:text-amber-800'
                   : 'border-gray-700 bg-gray-800/90 light:bg-white light:border-gray-200 text-gray-200 light:text-gray-800'
               }`}
             >

@@ -14,8 +14,11 @@ function isColdStartError(err: unknown): boolean {
     msg.includes("Can't reach database server") ||
     msg.includes('Connection timed out') ||
     msg.includes('connection timeout') ||
+    msg.includes('Timed out fetching a new connection from the connection pool') ||
+    msg.includes('connection pool') ||
     msg.includes('ECONNREFUSED') ||
-    msg.includes('ECONNRESET')
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT')
   )
 }
 

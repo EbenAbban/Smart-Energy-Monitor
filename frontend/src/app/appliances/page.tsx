@@ -12,6 +12,7 @@ import { AnimatedPage, FadeUp, HoverScale, StaggerGrid } from '@/components/anim
 import {
   Power, PowerOff, Refrigerator, Tv, AirVent, WashingMachine, Microwave, Waves, Plus, Trash2, Zap
 } from 'lucide-react'
+import { useSocket } from '@/hooks/useSocket'
 import type { Appliance } from '@/types'
 import { formatPower } from '@/lib/utils'
 
@@ -44,6 +45,13 @@ export default function AppliancesPage() {
 
   const confirmAppliance = confirmId ? appliances.find((a) => a.id === confirmId) : null
   const deleteTarget = deleteId ? appliances.find((a) => a.id === deleteId) : null
+
+  // Listen for real-time appliance status updates from physical ESP32 buttons or web toggles
+  useSocket<{ applianceId: number; status: boolean }>('applianceStatus', useCallback((data: { applianceId: number; status: boolean }) => {
+    setAppliances((prev) =>
+      prev.map((a) => (a.id === data.applianceId ? { ...a, status: data.status } : a))
+    )
+  }, []))
 
   useEffect(() => {
     api.getAppliances()

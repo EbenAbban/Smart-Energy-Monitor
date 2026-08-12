@@ -25,15 +25,23 @@ export default function LivePage() {
   const [pulse, setPulse] = useState(false)
 
   useEffect(() => {
-    api.getReadings({ limit: 50 })
-      .then((res) => {
-        setReadings(res.readings.reverse())
-        if (res.readings.length > 0) setLatest(res.readings[0])
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    const fetchLatestReadings = () => {
+      api.getReadings({ limit: 50 })
+        .then((res) => {
+          if (res.readings && res.readings.length > 0) {
+            setLatest(res.readings[0])
+            setReadings([...res.readings].reverse())
+          }
+        })
+        .catch(console.error)
+        .finally(() => setLoading(false))
+    }
+
+    fetchLatestReadings()
+    const interval = setInterval(fetchLatestReadings, 3000)
 
     const socket = connectSocket()
+    if (socket.connected) setConnected(true)
     socket.on('connect', () => setConnected(true))
     socket.on('disconnect', () => setConnected(false))
     socket.on('reading', (data: EnergyReading) => {
@@ -46,7 +54,10 @@ export default function LivePage() {
       })
     })
 
-    return () => { socket.off('reading') }
+    return () => {
+      clearInterval(interval)
+      socket.off('reading')
+    }
   }, [])
 
   useEffect(() => {
@@ -88,7 +99,13 @@ export default function LivePage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-white light:text-gray-900">
-                    {latest ? <CountUp value={latest.energyUsed} suffix=" kWh" /> : '--'}
+                    {latest ? (
+                      <CountUp
+                        value={latest.energyUsed < 1.0 ? latest.energyUsed * 1000 : latest.energyUsed}
+                        decimals={latest.energyUsed < 0.01 ? 2 : latest.energyUsed < 1.0 ? 1 : 2}
+                        suffix={latest.energyUsed < 1.0 ? " Wh" : " kWh"}
+                      />
+                    ) : '--'}
                   </div>
                   <p className="text-xs text-gray-500">{latest?.appliance?.name ?? 'N/A'}</p>
                 </CardContent>

@@ -304,7 +304,7 @@ async function generateCostEstimation(action: 'download' | 'print', pricing: Pri
 
 type ReportKey = 'daily' | 'weekly' | 'monthly' | 'appliance' | 'peak' | 'cost'
 
-const reports: { key: ReportKey; title: string; description: string; icon: React.ElementType; date: string; type: string; fn: (action: 'download' | 'print', pricing: PricingConfig) => Promise<void> }[] = [
+const reports: { key: ReportKey; title: string; description: string; icon: React.ComponentType<{ className?: string }>; date: string; type: string; fn: (action: 'download' | 'print', pricing: PricingConfig) => Promise<void> }[] = [
   { key: 'daily',     title: 'Daily Energy Summary',       description: "Complete overview of today's energy consumption by appliance",  icon: BarChart3, date: 'Today',        type: 'Daily',   fn: generateDailySummary },
   { key: 'weekly',    title: 'Weekly Consumption Report',   description: '7-day energy usage trends and comparison',                       icon: PieChart,  date: 'This Week',   type: 'Weekly',  fn: generateWeeklySummary },
   { key: 'monthly',   title: 'Monthly Budget Analysis',     description: 'Budget vs actual usage for the current month',                   icon: Table,     date: 'This Month',  type: 'Monthly', fn: generateMonthlyBudget },
@@ -384,24 +384,26 @@ export default function ReportsPage() {
       </FadeUp>
 
       <StaggerGrid className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {reports.map((report, i) => (
-          <HoverScale key={report.key}>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.08 }}
-            >
-              <Card className="group hover:border-emerald-800/50 light:hover:border-emerald-300 transition-all duration-300">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <motion.div
-                      whileHover={{ rotate: [0, -10, 10, 0] }}
-                      className="rounded-lg bg-emerald-500/20 light:bg-emerald-100 p-2 text-emerald-400 light:text-emerald-600"
-                    >
-                      <report.icon className="h-6 w-6" />
-                    </motion.div>
-                    <Badge variant="info">{report.type}</Badge>
-                  </div>
+        {reports.map((report, i) => {
+          const Icon = report.icon
+          return (
+            <HoverScale key={report.key}>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.08 }}
+              >
+                <Card className="group hover:border-emerald-800/50 light:hover:border-emerald-300 transition-all duration-300">
+                  <CardContent className="p-6">
+                    <div className="flex items-start justify-between">
+                      <motion.div
+                        whileHover={{ rotate: [0, -10, 10, 0] }}
+                        className="rounded-lg bg-emerald-500/20 light:bg-emerald-100 p-2 text-emerald-400 light:text-emerald-600"
+                      >
+                        <Icon className="h-6 w-6" />
+                      </motion.div>
+                      <Badge variant="info">{report.type}</Badge>
+                    </div>
                   <h3 className="mt-4 font-semibold text-white light:text-gray-900 group-hover:text-emerald-400 light:group-hover:text-emerald-600 transition-colors">
                     {report.title}
                   </h3>
@@ -445,8 +447,8 @@ export default function ReportsPage() {
               </Card>
             </motion.div>
           </HoverScale>
-        ))}
-      </StaggerGrid>
+        )})
+      }</StaggerGrid>
     </AnimatedPage>
   )
 }

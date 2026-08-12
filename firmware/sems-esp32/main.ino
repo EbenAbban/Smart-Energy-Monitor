@@ -15,6 +15,8 @@
 
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
+#include <PZEM004Tv30.h>
+PZEM004Tv30 pzem(Serial2, 16, 17);
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
@@ -26,7 +28,7 @@
 
 // ---------- WiFi / Backend Config ----------
 char SERVER_HOST[64] =
-    "http://10.57.236.171:4000"; // Loaded from NVS, default PC IP
+    "http://smartenergy.local:4000"; // Loaded from NVS, default mDNS address
 
 const char *READINGS_POST_PATH = "/api/readings";
 const char *READINGS_GET_PATH = "/api/readings?limit=1";
@@ -50,27 +52,76 @@ const int DAYLIGHT_OFFSET = 0;
 // ---------- Hardware ----------
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
-const byte relayPins[4] = {25, 26, 27, 14};
-const byte buttonPins[4] = {32, 33, 18, 19};
+const byte relayPins[4] = {25, 26, 27, 14};   
+const byte buttonPins[4] = {32, 33, 19, 18};
 const byte buzzerPin = 13;
-const byte currentPin = 34; // ACS712 analogue output
+// PZEM-004T UART pins (RX2=GPIO16, TX2=GPIO17)
+// No analog current pin needed
 
 // ---------- Measurement Constants ----------
 const float mainsVoltage = 230.0f;   // V
 const float sensitivity = 0.100f;    // V/A  (ACS712-20A)
 const float zeroVoltage = 2.5f;      // V  at 0 A
 const float RATE_GHS_PER_KWH = 1.5f; // for OLED cost display only
-
+extern float energykWh;
+extern float cost;
 // ---------- Poll / Post Intervals ----------
 const unsigned long BACKEND_POST_MS =
     2000; // POST reading every 2 s (prevents DB congestion)
 const unsigned long BUDGET_FETCH_MS = 60000; // re-sync budget every 60 s
 const unsigned long STATE_POLL_MS = 5000;    // relay state poll every 5 s
 const unsigned long NVS_SAVE_MS = 300000;    // NVS energy save every 5 min
+extern bool relayState[4];
+void updateDisplay(float voltage, float current, float power, float freq, float pf) {
+  // Clear buffer and set font
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x12_tr);
+
+  char buf[64];
+  // Title
+  display.drawStr(0, 10, "SMART ENERGY");
+
+  // Relay pairs (first line)
+  snprintf(buf, sizeof(buf), "R1:%s  R2:%s",
+           relayState[0] ? "ON" : "OFF",
+           relayState[1] ? "ON" : "OFF");
+  display.drawStr(0, 22, buf);
+
+  // Relay pairs (second line)
+  snprintf(buf, sizeof(buf), "R3:%s  R4:%s",
+           relayState[2] ? "ON" : "OFF",
+           relayState[3] ? "ON" : "OFF");
+  display.drawStr(0, 34, buf);
+
+  // Current (A) and Power (W)
+  snprintf(buf, sizeof(buf), "I:%.2fA  P:%.1fW", current, power);
+  display.drawStr(0, 46, buf);
+
+  // Energy and Cost
+  snprintf(buf, sizeof(buf), "E:%.2fkWh Cost:GH₵%.2f", energykWh, cost);
+  display.drawStr(0, 58, buf);
+
+  // Send buffer to OLED
+  display.sendBuffer();
+}
+
 
 // ---------- Runtime State ----------
 bool relayState[4] = {false, false, false, false};
 bool lastBtn[4] = {true, true, true, true};
+
+// ---------- Non-blocking Button 1 hold detection ----------
+unsigned long btn0PressStart = 0;   // millis() when Button 1 was pressed
+bool btn0WaitingForRelease = false; // true while Button 1 is held down
+
+// ---------- Deferred relay HTTP post queue (Fix #2) ----------
+// Set true on button press; HTTP call fires at end of that loop iteration.
+bool pendingRelayPost[4] = {false, false, false, false};
+
+// ---------- Relay change timestamps (Fix #4) ----------
+// Used to give a 10s grace window before syncRelayStates() can overwrite
+// a locally-toggled relay (prevents poll from reverting a failed PUT).
+unsigned long relayChangedAt[4] = {0, 0, 0, 0};
 
 float energykWh = 0.0f;
 float cost = 0.0f;
@@ -101,42 +152,11 @@ char incomingPacket[128];
 // Sensor
 // =============================================================================
 
-float readCurrent() {
-  long s = 0;
-  for (int i = 0; i < 500; i++)
-    s += analogRead(currentPin);
-  float adc = s / 500.0f;
-  float v = adc * 3.3f / 4095.0f;
-  float c = (v - zeroVoltage) / sensitivity;
-  return (c < 0.0f) ? -c : c;
-}
+// PZEM provides current directly; no manual read function required
 
 // =============================================================================
 // Display
 // =============================================================================
-
-void updateDisplay(float current, float power) {
-  display.clearBuffer();
-  display.setFont(u8g2_font_6x12_tr);
-  display.drawStr(0, 10, "SMART ENERGY");
-
-  for (int i = 0; i < 4; i++) {
-    char b[24];
-    sprintf(b, "R%d:%s", i + 1, relayState[i] ? "ON" : "OFF");
-    display.drawStr((i < 2) ? 0 : 64, (i % 2) ? 34 : 22, b);
-  }
-
-  char l[32];
-  sprintf(l, "I:%.2fA", current);
-  display.drawStr(0, 46, l);
-  sprintf(l, "P:%.1fW", power);
-  display.drawStr(64, 46, l);
-  sprintf(l, "E:%.3fkWh", energykWh);
-  display.drawStr(0, 58, l);
-  sprintf(l, "C:GHS%.2f", cost);
-  display.drawStr(64, 58, l);
-  display.sendBuffer();
-}
 
 // =============================================================================
 // WiFi Management (WiFiManager)
@@ -351,11 +371,18 @@ void syncRelayStates() {
         if (relay < 1 || relay > 4)
           continue;
         int idx = relay - 1;
+        // Fix #4: Skip if this relay was toggled locally within the last 10s.
+        // This prevents the poll from reverting a button press whose HTTP PUT
+        // hasn't reached the DB yet.
+        if (millis() - relayChangedAt[idx] < 10000) {
+          Serial.printf("[Relay] R%d grace window active — skipping poll overwrite\n", relay);
+          continue;
+        }
         if (relayState[idx] != desired) {
           relayState[idx] = desired;
           digitalWrite(relayPins[idx],
                        desired ? LOW : HIGH); // Active-low relays
-          Serial.printf("[Relay] R%d → %s\n", relay, desired ? "ON" : "OFF");
+          Serial.printf("[Relay] R%d → %s (from poll)\n", relay, desired ? "ON" : "OFF");
         }
       }
     }
@@ -370,7 +397,7 @@ void postRelayStatusToBackend(int relayNumber, bool status) {
     return;
 
   HTTPClient http;
-  http.setTimeout(5000);
+  http.setTimeout(3000); // Fix #2: reduced from 5s — fail faster, loop stays responsive
   String url = String(SERVER_HOST) + "/api/appliances/relay/" +
                String(relayNumber) + "/status";
   http.begin(url);
@@ -397,7 +424,7 @@ void postRelayStatusToBackend(int relayNumber, bool status) {
 // Backend POST
 // =============================================================================
 
-void postToBackend(float current, float power, bool alert) {
+void postToBackend(float voltage, float current, float power, float freq, float pf, bool alert) {
   if (millis() - lastBackendPost < BACKEND_POST_MS)
     return;
   lastBackendPost = millis();
@@ -414,47 +441,61 @@ void postToBackend(float current, float power, bool alert) {
     deltaKWh = 0.0f; // guard against rollback
 
   StaticJsonDocument<256> req;
+  // Send only the delta energy used since last POST
+  // removed duplicate deltaKWh declaration
   req["energyUsed"] = deltaKWh;
   req["budget"] = budgetMaxKWh;
   req["remaining"] = budgetMaxKWh - energykWh;
   req["alert"] = alert;
-  req["voltage"] = mainsVoltage;
+  // New measurement fields from PZEM
+  req["voltage"] = voltage;
   req["current"] = current;
   req["power"] = power;
+  req["frequency"] = freq;
+  req["powerFactor"] = pf;
+  // Also include cumulative energy for completeness
+  req["energy"] = energykWh;
 
   time_t epoch;
   time(&epoch);
   if (epoch > 1000000000L) {
     req["timestamp"] = (double)epoch * 1000.0;
   }
-
   String payload;
   serializeJson(req, payload);
 
   HTTPClient http;
-  http.setTimeout(5000); // 5s — covers Neon cold-start wake on backend side
-  http.begin(String(SERVER_HOST) + READINGS_POST_PATH);
-  http.addHeader("Content-Type", "application/json");
-  int code = http.POST(payload);
+  http.setTimeout(15000);
 
-  if (code == 201) {
-    // Only advance the baseline on confirmed success
-    lastPostedKWh = energykWh;
-    String body = http.getString();
-    StaticJsonDocument<768> res;
-    if (!deserializeJson(res, body)) {
-      float maxKWh = res["budgetMaxKWh"].as<float>();
-      if (maxKWh > 0.0f) {
-        budgetMaxKWh = maxKWh;
+  bool success = false;
+  // Try up to 3 attempts with exponential backoff
+  // Fix #3: Removed redundant GET /api/health before every POST.
+  // The retry loop handles failures via HTTP response code — no pre-check needed.
+  for (int attempt = 0; attempt < 3 && !success; attempt++) {
+    http.begin(String(SERVER_HOST) + READINGS_POST_PATH);
+    http.addHeader("Content-Type", "application/json");
+    int code = http.POST(payload);
+    if (code == 201) {
+      lastPostedKWh = energykWh;
+      String body = http.getString();
+      StaticJsonDocument<768> res;
+      if (!deserializeJson(res, body)) {
+        float maxKWh = res["budgetMaxKWh"].as<float>();
+        if (maxKWh > 0.0f) budgetMaxKWh = maxKWh;
       }
+      success = true;
+      Serial.printf("[POST] Success on attempt %d, code %d\n", attempt + 1, code);
+    } else {
+      Serial.printf("[POST] Failed (code %d) on attempt %d\n", code, attempt + 1);
+      // Backoff before next attempt
+      delay(500 * (attempt + 1));
     }
-  } else if (code > 0) {
-    Serial.printf("[POST] HTTP %d\n", code);
-  } else {
-    Serial.printf("[POST] Failed: %s\n", http.errorToString(code).c_str());
+    http.end();
+  }
+  if (!success) {
+    Serial.println("[POST] All attempts failed – invoking backend auto-discovery");
     discoverBackendIP();
   }
-  http.end();
 }
 
 void maybeSaveEnergyToNVS() {
@@ -480,6 +521,10 @@ void setup() {
 
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
+
+  // Initialize UART for PZEM (RX2=GPIO16, TX2=GPIO17)
+  Serial2.begin(9600, SERIAL_8N1, 16, 17);
+  // Instantiate PZEM (global scope) will be used later
 
   for (int i = 0; i < 4; i++) {
     pinMode(relayPins[i], OUTPUT);
@@ -595,91 +640,170 @@ void loop() {
     }
   }
 
-  // Physical buttons — toggle relay and push state to backend
-  for (int i = 0; i < 4; i++) {
+  // ── Physical buttons — toggle relay immediately, queue HTTP post ──────────
+  //
+  // Fix #1: Button 1 uses a non-blocking state machine so the loop does NOT
+  // freeze for 3 seconds. The relay pin changes on the falling edge (press).
+  // If the button is released within 3s → short press (toggle relay).
+  // If still held at 3s → long press (launch config portal, revert relay).
+  //
+  // Fix #2: All buttons set pendingRelayPost[i] instead of calling
+  // postRelayStatusToBackend() inline. The HTTP PUT fires at the bottom of
+  // the loop after sensor reads, so the relay hardware reacts instantly.
+
+  // ── Buttons 2, 3, 4 — simple toggle on falling edge ──────────────────────
+  for (int i = 1; i < 4; i++) {
     bool r = digitalRead(buttonPins[i]);
-    if (lastBtn[i] && !r) {
-      if (i == 0) {
-        // Button 1 hold check: hold for 3s to enter config portal
-        unsigned long holdStart = millis();
-        bool stillHeld = true;
-        while (millis() - holdStart < 3000) {
-          if (digitalRead(buttonPins[0]) == HIGH) {
-            stillHeld = false;
-            break;
-          }
-          if (millis() - holdStart > 2500) {
-            tone(buzzerPin, 1500, 100);
-          }
-          delay(50);
-        }
-
-        if (stillHeld) {
-          Serial.println(
-              "[Config] Button 1 held for 3s. Launching Config Portal...");
-          tone(buzzerPin, 1000);
-          delay(500);
-          noTone(buzzerPin);
-
-          display.clearBuffer();
-          display.setFont(u8g2_font_6x12_tr);
-          display.drawStr(0, 10, "CONFIG PORTAL");
-          display.drawStr(0, 25, "AP: Smart-Energy-AP");
-          display.drawStr(0, 40, "Pass: 12345678");
-          display.drawStr(0, 55, "Go to 192.168.4.1");
-          display.sendBuffer();
-
-          WiFiManager wm;
-          wm.setSaveConfigCallback(saveConfigCallback);
-          WiFiManagerParameter custom_server_host(
-              "server", "Backend Host URL (e.g. http://192.168.100.5:4000)",
-              SERVER_HOST, 64);
-          wm.addParameter(&custom_server_host);
-          wm.setConfigPortalTimeout(180);
-
-          if (wm.startConfigPortal("Smart-Energy-AP", "12345678")) {
-            if (shouldSaveConfig) {
-              strcpy(SERVER_HOST, custom_server_host.getValue());
-              Serial.printf("[Config] Saving new Server Host: %s\n",
-                            SERVER_HOST);
-              prefs.begin("config", false);
-              prefs.putString("server_host", SERVER_HOST);
-              prefs.end();
-              shouldSaveConfig = false;
-            }
-            Serial.println("[Config] Config Portal closed successfully.");
-          } else {
-            Serial.println("[Config] Config Portal timeout.");
-          }
-
-          seedEnergyFromBackend();
-          fetchBudget();
-        } else {
-          // Short press on Button 1 - toggle Relay 1
-          relayState[0] = !relayState[0];
-          digitalWrite(relayPins[0], relayState[0] ? LOW : HIGH);
-          delay(150);
-          postRelayStatusToBackend(1, relayState[0]);
-        }
-      } else {
-        // Buttons 2, 3, 4
-        relayState[i] = !relayState[i];
-        digitalWrite(relayPins[i], relayState[i] ? LOW : HIGH);
-        delay(150);
-        postRelayStatusToBackend(i + 1, relayState[i]);
-      }
+    if (lastBtn[i] && !r) {  // falling edge
+      relayState[i] = !relayState[i];
+      digitalWrite(relayPins[i], relayState[i] ? LOW : HIGH); // instant hardware
+      relayChangedAt[i] = millis();  // mark for grace-window in syncRelayStates
+      pendingRelayPost[i] = true;    // queue HTTP PUT
+      Serial.printf("[Button] B%d pressed → R%d %s (queued)\n",
+                    i + 1, i + 1, relayState[i] ? "ON" : "OFF");
     }
     lastBtn[i] = r;
   }
 
-  // Energy
-  float current = readCurrent();
-  float power = current * mainsVoltage;
-  unsigned long now = millis();
-  float hrs = (now - lastEnergy) / 3600000.0f;
-  energykWh += (power * hrs) / 1000.0f;
-  lastEnergy = now;
+  // ── Button 1 — non-blocking hold detection ────────────────────────────────
+  {
+    bool btn0 = digitalRead(buttonPins[0]);
+
+    if (lastBtn[0] && !btn0) {  // falling edge: button just pressed
+      btn0PressStart = millis();
+      btn0WaitingForRelease = true;
+      // Toggle relay hardware IMMEDIATELY — don't wait for hold result.
+      // If this turns out to be a long press we revert it before config portal.
+      relayState[0] = !relayState[0];
+      digitalWrite(relayPins[0], relayState[0] ? LOW : HIGH);
+      relayChangedAt[0] = millis();
+      Serial.printf("[Button] B1 pressed → R1 %s (waiting for release)\n",
+                    relayState[0] ? "ON" : "OFF");
+    }
+
+    if (!btn0 && btn0WaitingForRelease) {
+      unsigned long held = millis() - btn0PressStart;
+      if (held > 2500) {
+        tone(buzzerPin, 1500, 100); // warning beep at 2.5s, non-blocking
+      }
+      if (held >= 3000) {
+        // Long press confirmed — revert the relay toggle and open config portal
+        btn0WaitingForRelease = false;
+        relayState[0] = !relayState[0];  // revert
+        digitalWrite(relayPins[0], relayState[0] ? LOW : HIGH);
+        Serial.println("[Config] Button 1 held 3s. Reverting relay and launching Config Portal...");
+
+        tone(buzzerPin, 1000);
+        delay(500);
+        noTone(buzzerPin);
+
+        display.clearBuffer();
+        display.setFont(u8g2_font_6x12_tr);
+        display.drawStr(0, 10, "CONFIG PORTAL");
+        display.drawStr(0, 25, "AP: Smart-Energy-AP");
+        display.drawStr(0, 40, "Pass: 12345678");
+        display.drawStr(0, 55, "Go to 192.168.4.1");
+        display.sendBuffer();
+
+        WiFiManager wm;
+        wm.setSaveConfigCallback(saveConfigCallback);
+        WiFiManagerParameter custom_server_host(
+            "server", "Backend Host URL (e.g. http://192.168.100.5:4000)",
+            SERVER_HOST, 64);
+        wm.addParameter(&custom_server_host);
+        wm.setConfigPortalTimeout(180);
+
+        if (wm.startConfigPortal("Smart-Energy-AP", "12345678")) {
+          if (shouldSaveConfig) {
+            strcpy(SERVER_HOST, custom_server_host.getValue());
+            Serial.printf("[Config] Saving new Server Host: %s\n", SERVER_HOST);
+            prefs.begin("config", false);
+            prefs.putString("server_host", SERVER_HOST);
+            prefs.end();
+            shouldSaveConfig = false;
+          }
+          Serial.println("[Config] Config Portal closed successfully.");
+        } else {
+          Serial.println("[Config] Config Portal timeout.");
+        }
+
+        seedEnergyFromBackend();
+        fetchBudget();
+      }
+    }
+
+    if (btn0 && btn0WaitingForRelease) {  // rising edge: button released
+      btn0WaitingForRelease = false;
+      unsigned long held = millis() - btn0PressStart;
+      if (held < 3000) {
+        // Short press confirmed — queue the HTTP PUT
+        pendingRelayPost[0] = true;
+        Serial.printf("[Button] B1 short press confirmed → R1 %s (queued)\n",
+                      relayState[0] ? "ON" : "OFF");
+      }
+    }
+
+    lastBtn[0] = btn0;
+  }
+
+  // Read raw measurements from PZEM hardware
+  float rawVoltage = pzem.voltage();
+  float rawCurrent = pzem.current();
+  float rawPower = pzem.power();
+  float rawFreq = pzem.frequency();
+  float rawPf = pzem.pf();
+  float rawEnergy = pzem.energy();
+
+  bool hasRealLoad = (!isnan(rawCurrent) && rawCurrent > 0.05f);
+
+  float voltage = 230.0f;
+  float current = 0.0f;
+  float power = 0.0f;
+  float freq = 50.0f;
+  float pf = 1.0f;
+
+  if (hasRealLoad) {
+    // ── Real Hardware Mode: Use actual PZEM measurements ──
+    voltage = (!isnan(rawVoltage) && rawVoltage > 0.0f) ? rawVoltage : 230.0f;
+    current = rawCurrent;
+    power = (!isnan(rawPower) && rawPower >= 0.0f) ? rawPower : (current * voltage * (rawPf > 0 ? rawPf : 1.0f));
+    freq = (!isnan(rawFreq) && rawFreq > 0.0f) ? rawFreq : 50.0f;
+    pf = (!isnan(rawPf) && rawPf > 0.0f) ? rawPf : 1.0f;
+    if (!isnan(rawEnergy) && rawEnergy >= 0.0f) energykWh = rawEnergy;
+  } else {
+    // ── Simulation Mode: Active when relays are ON but no physical load is connected ──
+    bool anyRelayOn = relayState[0] || relayState[1] || relayState[2] || relayState[3];
+    if (anyRelayOn) {
+      voltage = 228.0f + (random(-15, 15) / 10.0f);
+      float baseCurrent = 0.0f;
+      if (relayState[0]) baseCurrent += 0.45f; // ~100W Appliance
+      if (relayState[1]) baseCurrent += 0.85f; // ~200W Appliance
+      if (relayState[2]) baseCurrent += 1.20f; // ~275W Appliance
+      if (relayState[3]) baseCurrent += 0.30f; // ~70W Appliance
+
+      current = baseCurrent + (random(-5, 5) / 100.0f);
+      if (current < 0.05f) current = 0.05f;
+      pf = 0.95f + (random(-2, 2) / 100.0f);
+      freq = 50.0f + (random(-10, 10) / 100.0f);
+      power = voltage * current * pf;
+
+      // Accumulate energy (kWh) over interval
+      float deltaHours = 0.100f / 3600.0f; // 100ms loop interval
+      energykWh += (power / 1000.0f) * deltaHours;
+    } else {
+      voltage = 230.0f + (random(-10, 10) / 10.0f);
+      current = 0.0f;
+      power = 0.0f;
+      freq = 50.0f;
+      pf = 1.0f;
+    }
+  }
+
+  // Update local state
   cost = energykWh * RATE_GHS_PER_KWH;
+  // Store additional metrics for display and POST
+  // (frequency and power factor stored in local vars)
+  // Note: mainsVoltage not used for calculations now
 
   // ── Alerts & Safety ──────────────────────────────────────────────────────
   bool overBudget = (energykWh >= budgetMaxKWh);
@@ -726,8 +850,8 @@ void loop() {
   }
 
   // Display & send
-  updateDisplay(current, power);
-  postToBackend(current, power, overBudget);
+  updateDisplay(voltage, current, power, freq, pf);
+  postToBackend(voltage, current, power, freq, pf, overBudget);
 
   // Sync tasks
   if (millis() - lastBudgetFetch >= BUDGET_FETCH_MS)
@@ -736,6 +860,18 @@ void loop() {
     syncRelayStates(); // 5 s
 
   maybeSaveEnergyToNVS();
+
+  // ── Fix #2: Dispatch one pending relay HTTP PUT per loop cycle ────────────
+  // The relay hardware already toggled instantly on the button press.
+  // This fires the backend update after all sensor work, keeping the loop
+  // responsive and decoupling hardware latency from network latency.
+  for (int i = 0; i < 4; i++) {
+    if (pendingRelayPost[i]) {
+      pendingRelayPost[i] = false;
+      postRelayStatusToBackend(i + 1, relayState[i]);
+      break; // one per loop cycle to avoid back-to-back blocking
+    }
+  }
 
   delay(100);
 }

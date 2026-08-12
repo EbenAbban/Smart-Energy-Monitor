@@ -5,20 +5,28 @@ const router = Router()
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { applianceId, energyUsed, voltage, current, power, timestamp, budget, remaining, alert } = req.body
+    const { applianceId, energyUsed, voltage, current, power, frequency, powerFactor, timestamp, budget, remaining, alert } = req.body
     if (energyUsed === undefined) {
       res.status(400).json({ error: 'energyUsed is required' })
       return
     }
+    const numVoltage = voltage != null && !isNaN(Number(voltage)) && Number(voltage) > 0 ? Number(voltage) : 230
+    const numCurrent = current != null && !isNaN(Number(current)) ? Number(current) : 0
+    const numPower = power != null && !isNaN(Number(power)) && Number(power) >= 0 ? Number(power) : (numCurrent * numVoltage)
+    const numFrequency = frequency != null && !isNaN(Number(frequency)) ? Number(frequency) : 50
+    const numPowerFactor = powerFactor != null && !isNaN(Number(powerFactor)) ? Number(powerFactor) : 1.0
+
     const reading = await energyService.createReading({
       applianceId: applianceId ? Number(applianceId) : undefined,
       energyUsed: Number(energyUsed),
-      voltage: voltage !== undefined ? Number(voltage) : undefined,
-      current: current !== undefined ? Number(current) : undefined,
-      power: power !== undefined ? Number(power) : undefined,
+      voltage: numVoltage,
+      current: numCurrent,
+      power: numPower,
+      frequency: numFrequency,
+      powerFactor: numPowerFactor,
       timestamp,
-      budget,
-      remaining,
+      budget: budget != null ? Number(budget) : undefined,
+      remaining: remaining != null ? Number(remaining) : undefined,
       alert,
     })
     req.app.get('io')?.emit('reading', reading)

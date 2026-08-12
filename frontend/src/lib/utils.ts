@@ -6,6 +6,15 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatEnergy(kwh: number): string {
+  if (kwh === 0 || isNaN(kwh)) return '0 Wh'
+  const absKwh = Math.abs(kwh)
+  if (absKwh < 1.0) {
+    const wh = kwh * 1000
+    if (absKwh < 0.01) {
+      return `${wh.toFixed(2)} Wh`
+    }
+    return `${wh.toFixed(1)} Wh`
+  }
   return `${kwh.toFixed(2)} kWh`
 }
 

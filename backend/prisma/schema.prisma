@@ -3,35 +3,37 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 model Appliance {
-  id          Int            @id @default(autoincrement())
+  id          Int             @id @default(autoincrement())
   name        String
   powerRating Float
-  status      Boolean        @default(false)
+  status      Boolean         @default(false)
   relayNumber Int
-  icon        String         @default("plug")
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  icon        String          @default("plug")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
   readings    EnergyReading[]
 }
 
 model EnergyReading {
-  id         Int       @id @default(autoincrement())
-  timestamp  DateTime  @default(now())
-  energyUsed Float
-  voltage    Float     @default(120.0)
-  current    Float     @default(0.0)
-  power      Float     @default(0.0)
-  appliance  Appliance @relation(fields: [applianceId], references: [id])
+  id          Int       @id @default(autoincrement())
+  timestamp   DateTime  @default(now())
+  energyUsed  Float
+  voltage     Float     @default(120.0)
+  current     Float     @default(0.0)
+  power       Float     @default(0.0)
+  frequency   Float?
+  powerFactor Float?
   applianceId Int
-  budget     Float     @default(0)
-  remaining  Float     @default(0)
-  alert      Boolean   @default(false)
+  budget      Float     @default(0)
+  remaining   Float     @default(0)
+  alert       Boolean   @default(false)
+  appliance   Appliance @relation(fields: [applianceId], references: [id])
 
   @@index([applianceId])
   @@index([timestamp])

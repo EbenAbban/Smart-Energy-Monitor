@@ -32,10 +32,16 @@ export default function DashboardPage() {
   const { config: pricing } = usePricing()
 
   useEffect(() => {
-    api.getDashboard()
-      .then(setData)
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    const fetchData = () => {
+      api.getDashboard()
+        .then(setData)
+        .catch(console.error)
+        .finally(() => setLoading(false))
+    }
+
+    fetchData()
+    const interval = setInterval(fetchData, 3000)
+    return () => clearInterval(interval)
   }, [])
 
   useSocket('reading', () => {
@@ -201,7 +207,7 @@ export default function DashboardPage() {
                           <YAxis stroke="#6b7280" fontSize={12} unit=" kWh" />
                           <Tooltip
                             contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' }}
-                            formatter={(value: TooltipValueType | undefined) => [Number(value).toFixed(2) + ' kWh', 'Energy']}
+                            formatter={(value: TooltipValueType | undefined) => [formatEnergy(Number(value)), 'Energy']}
                           />
                           <Area
                             type="monotone"
