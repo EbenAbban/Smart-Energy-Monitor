@@ -62,6 +62,27 @@ server.listen(PORT, () => {
   console.log(`Smart Energy Monitor backend running on http://localhost:${PORT}`)
 })
 
+// Neon suspends its compute after a few minutes of inactivity, and the first
+// query after that pays a multi-second cold-start cost. Pinging on an interval
+// shorter than the suspend timeout keeps the compute warm for as long as this
+// process runs. Fired once immediately too, since setInterval only fires
+// after the first delay elapses -- without this, a fresh backend start left
+// idle (e.g. while waiting on something else) can still hit a cold start.
+const KEEP_ALIVE_INTERVAL_MS = 60 * 1000
+const RETRY_DELAY_MS = 5 * 1000
+
+// A ping can land mid-wake and fail outright rather than just being slow.
+// One retry a few seconds later closes that gap instead of leaving the
+// connection cold for the rest of the interval.
+const pingDatabase = (isRetry = false) => {
+  prisma.$queryRaw`SELECT 1`.catch((err) => {
+    console.error(`Keep-alive ping failed${isRetry ? ' (retry)' : ''}:`, err)
+    if (!isRetry) setTimeout(() => pingDatabase(true), RETRY_DELAY_MS)
+  })
+}
+pingDatabase()
+setInterval(() => pingDatabase(), KEEP_ALIVE_INTERVAL_MS)
+
 process.on('SIGTERM', async () => {
   await prisma.$disconnect()
   server.close()
