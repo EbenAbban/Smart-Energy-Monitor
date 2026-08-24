@@ -29,7 +29,6 @@ export default function AppliancesPage() {
   const [appliances, setAppliances] = useState<Appliance[]>([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<number | null>(null)
-  const [confirmId, setConfirmId] = useState<number | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -43,7 +42,6 @@ export default function AppliancesPage() {
     icon: 'refrigerator',
   })
 
-  const confirmAppliance = confirmId ? appliances.find((a) => a.id === confirmId) : null
   const deleteTarget = deleteId ? appliances.find((a) => a.id === deleteId) : null
 
   // Listen for real-time appliance status updates from physical ESP32 buttons or web toggles
@@ -62,7 +60,6 @@ export default function AppliancesPage() {
 
   const toggleStatus = useCallback(async (appliance: Appliance) => {
     setToggling(appliance.id)
-    setConfirmId(null)
     try {
       const updated = await api.updateApplianceStatus(appliance.id, !appliance.status)
       setAppliances((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
@@ -166,11 +163,18 @@ export default function AppliancesPage() {
                 </div>
 
                 <div className="mt-4 flex items-center justify-between text-sm text-gray-500 light:text-gray-400">
-                  <span>Relay #{appliance.relayNumber}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span>Relay #{appliance.relayNumber}</span>
+                    {appliance.relayNumber === 1 && (
+                      <Badge variant="success" className="text-[10px] py-0 px-1.5 bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                        Physical Hardware (GPIO 19)
+                      </Badge>
+                    )}
+                  </div>
                   <Button
                     variant={appliance.status ? 'destructive' : 'secondary'}
                     size="sm"
-                    onClick={() => setConfirmId(appliance.id)}
+                    onClick={() => toggleStatus(appliance)}
                     disabled={toggling === appliance.id}
                     className="gap-1 transition-all"
                   >
@@ -193,27 +197,6 @@ export default function AppliancesPage() {
           </HoverScale>
         ))}
       </StaggerGrid>
-
-      {/* Toggle Status Confirmation Dialog */}
-      <Dialog
-        open={confirmId !== null}
-        onClose={() => setConfirmId(null)}
-        title={confirmAppliance?.status ? 'Turn Off Appliance' : 'Turn On Appliance'}
-        description={`Are you sure you want to ${confirmAppliance?.status ? 'turn off' : 'turn on'} ${confirmAppliance?.name ?? 'this appliance'}?`}
-        actions={
-          <>
-            <Button variant="outline" onClick={() => setConfirmId(null)}>Cancel</Button>
-            <Button
-              variant={confirmAppliance?.status ? 'destructive' : 'default'}
-              onClick={() => confirmAppliance && toggleStatus(confirmAppliance)}
-              className="gap-1"
-            >
-              {confirmAppliance?.status ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
-              Yes, {confirmAppliance?.status ? 'Turn Off' : 'Turn On'}
-            </Button>
-          </>
-        }
-      />
 
       {/* Delete Appliance Confirmation Dialog */}
       <Dialog
@@ -273,7 +256,7 @@ export default function AppliancesPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-300 mb-1">Relay # (1 to 6)</label>
+              <label className="block text-xs font-medium text-gray-300 mb-1">Relay # (1 = Physical ESP32 Hardware)</label>
               <input
                 type="number"
                 required

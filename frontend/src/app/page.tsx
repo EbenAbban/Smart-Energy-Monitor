@@ -83,6 +83,9 @@ export default function DashboardPage() {
           <p className="text-sm text-gray-400 light:text-gray-500">Real-time energy monitoring overview</p>
         </div>
         <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-400 hidden sm:inline-flex">
+            Single-Channel Mode (GPIO 19)
+          </Badge>
           <Badge variant="success" className="gap-1 animate-slide-up">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />

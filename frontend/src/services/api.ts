@@ -2,16 +2,24 @@ import type { Appliance, Budget, DashboardData, EnergyReading, ReadingsResponse 
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
 
-async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || 'API request failed')
+async function fetchJSON<T>(url: string, options?: RequestInit, retries = 1): Promise<T> {
+  try {
+    const res = await fetch(`${API_BASE}${url}`, {
+      headers: { 'Content-Type': 'application/json', ...options?.headers },
+      ...options,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new Error(err.error || 'API request failed')
+    }
+    return res.json()
+  } catch (err) {
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, 600))
+      return fetchJSON<T>(url, options, retries - 1)
+    }
+    throw err
   }
-  return res.json()
 }
 
 export const api = {
