@@ -3,65 +3,47 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
-  console.log('Seeding database...')
+  console.log('Seeding initial baseline database (No mock readings)...')
 
-  const appliances = await Promise.all([
-    prisma.appliance.create({
-      data: { name: 'Refrigerator', powerRating: 150, status: true, relayNumber: 1, icon: 'refrigerator' },
-    }),
-    prisma.appliance.create({
-      data: { name: 'Air Conditioner', powerRating: 2000, status: true, relayNumber: 2, icon: 'air-conditioner' },
-    }),
-    prisma.appliance.create({
-      data: { name: 'Washing Machine', powerRating: 500, status: false, relayNumber: 3, icon: 'washing-machine' },
-    }),
-    prisma.appliance.create({
-      data: { name: 'Television', powerRating: 120, status: true, relayNumber: 4, icon: 'tv' },
-    }),
-    prisma.appliance.create({
-      data: { name: 'Microwave', powerRating: 1000, status: false, relayNumber: 5, icon: 'microwave' },
-    }),
-    prisma.appliance.create({
-      data: { name: 'Water Heater', powerRating: 3000, status: false, relayNumber: 6, icon: 'water-heater' },
-    }),
-  ])
+  // Clean existing sample readings to ensure 100% real hardware telemetry
+  await prisma.energyReading.deleteMany({})
 
-  await prisma.budget.create({
-    data: {
-      month: new Date().getMonth() + 1,
-      year: new Date().getFullYear(),
-      maximumEnergy: 500,
-      currentUsage: 0,
-      status: 'active',
-    },
-  })
+  const existingAppliances = await prisma.appliance.findMany()
+  if (existingAppliances.length === 0) {
+    await Promise.all([
+      prisma.appliance.create({
+        data: { name: 'Main Power Load', powerRating: 2300, status: true, relayNumber: 1, icon: 'zap' },
+      }),
+      prisma.appliance.create({
+        data: { name: 'Air Conditioner (Virtual)', powerRating: 2000, status: false, relayNumber: 2, icon: 'air-conditioner' },
+      }),
+      prisma.appliance.create({
+        data: { name: 'Washing Machine (Virtual)', powerRating: 500, status: false, relayNumber: 3, icon: 'washing-machine' },
+      }),
+      prisma.appliance.create({
+        data: { name: 'Television (Virtual)', powerRating: 120, status: false, relayNumber: 4, icon: 'tv' },
+      }),
+    ])
+  }
 
   const now = new Date()
-  const readings = []
-  for (let hour = 0; hour < 24; hour++) {
-    for (const appliance of appliances) {
-      if (appliance.status) {
-        const baseEnergy = (appliance.powerRating / 1000) * (Math.random() * 0.5 + 0.5)
-        readings.push({
-          applianceId: appliance.id,
-          energyUsed: Math.round(baseEnergy * 100) / 100,
-          voltage: 120,
-          current: Math.round((baseEnergy * 1000) / 120 * 100) / 100,
-          power: Math.round(baseEnergy * 1000 * 100) / 100,
-          timestamp: new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, Math.floor(Math.random() * 60)),
-          budget: 500,
-          remaining: 500,
-          alert: false,
-        })
-      }
-    }
+  const existingBudget = await prisma.budget.findFirst({
+    where: { month: now.getMonth() + 1, year: now.getFullYear() },
+  })
+
+  if (!existingBudget) {
+    await prisma.budget.create({
+      data: {
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+        maximumEnergy: 500,
+        currentUsage: 0,
+        status: 'active',
+      },
+    })
   }
 
-  for (const r of readings) {
-    await prisma.energyReading.create({ data: r })
-  }
-
-  console.log(`Seeded ${appliances.length} appliances and ${readings.length} readings`)
+  console.log('✅ Base Database Initialized! Zero mock readings stored. Ready for live ESP32 telemetry.')
 }
 
 main()

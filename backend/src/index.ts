@@ -75,6 +75,8 @@ server.listen(PORT, HOST, () => {
   const lanIps: string[] = []
   const interfaces = os.networkInterfaces()
   for (const name of Object.keys(interfaces)) {
+    // Ignore virtual network adapters (VirtualBox, VMware, vEthernet, WSL, etc.)
+    if (/virtual|vbox|vmware|wsl|hyper-v|vEthernet/i.test(name)) continue;
     for (const iface of interfaces[name] || []) {
       if (iface.family === 'IPv4' && !iface.internal) {
         lanIps.push(iface.address)
